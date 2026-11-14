@@ -83,3 +83,7 @@ details[open]>summary{margin-bottom:-4px}
 .plist .row{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px 6px 4px 14px;font-size:14px}
 .link{color:var(--lime);text-decoration:none;font-size:13px;font-weight:600}
 @media (min-width:700px){.wrap{padding-top:48px}}
+
+.prow{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px 6px 6px 14px;font-size:14px}
+.pname{font-weight:500}
+.pbtns{display:flex;gap:6px;flex-wrap:wrap}

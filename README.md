@@ -56,6 +56,7 @@ Daarna op `http://localhost:3000` (spelers) en `/admin` (organisator).
 
 ## Goed om te weten
 
+- **Persoonlijke links:** onder "Spelers beheren" in `/admin` krijgt elke speler een eigen link (`/p/naam-code`). Die herkent de speler op elk apparaat. De gewone link, waarbij je je naam kiest, blijft ook werken.
 - **Vertrouwen:** een speler kiest zelf zijn naam. Wie dezelfde naam invult, overschrijft die stemmen. Voor een vriendengroep is dat bewust simpel gehouden. Je kunt spelers verwijderen onder "Spelers beheren".
 - **Pincode:** na 10 foute pogingen is er 10 minuten pauze. Kies geen pincode die je elders gebruikt.
 - **Back-up:** kopieer `db.json` uit de data-map af en toe. Dat is alles wat de app bewaart.

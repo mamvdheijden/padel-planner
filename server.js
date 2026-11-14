@@ -21,7 +21,7 @@ const DEFAULT_SETTINGS = {
 
 // ---------- opslag ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
-let db = { settings: { ...DEFAULT_SETTINGS }, round: null, history: [], players: [] };
+let db = { settings: { ...DEFAULT_SETTINGS }, round: null, history: [], players: [], links: [] };
 try {
   const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   db = { ...db, ...raw, settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) } };
@@ -178,6 +178,17 @@ function checkAdmin(req, res) {
 
 const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 30);
 
+// Persoonlijke links: /p/<naam>-<token>. De token is de enige geheime component.
+const slugify = (n) => String(n).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20);
+const linkPath = (l) => `/p/${slugify(l.name) ? slugify(l.name) + '-' : ''}${l.token}`;
+function ensureLink(name) {
+  const known = db.players.find((n) => n.toLowerCase() === name.toLowerCase());
+  let l = db.links.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (!l) { l = { name: known || name, token: crypto.randomBytes(5).toString('hex') }; db.links.push(l); }
+  if (!known) db.players.push(l.name);
+  return l;
+}
+
 // ---------- routes ----------
 async function api(req, res, url) {
   const m = req.method;
@@ -185,9 +196,24 @@ async function api(req, res, url) {
 
   if (m === 'GET' && p === '/api/state') return json(res, 200, publicState());
 
+  if (m === 'GET' && p === '/api/whoami') {
+    const key = 'w' + clientIp(req);
+    const f = fails.get(key);
+    if (f && f.count >= 20 && Date.now() - f.first < 10 * 60 * 1000) return json(res, 429, { error: 'Te veel pogingen. Probeer het later opnieuw.' });
+    const t = String(url.searchParams.get('token') || '');
+    const l = db.links.find((x) => x.token === t);
+    if (!l) {
+      const now = Date.now();
+      if (!f || now - f.first > 10 * 60 * 1000) fails.set(key, { count: 1, first: now }); else f.count++;
+      return json(res, 404, { error: 'Deze link is niet (meer) geldig.' });
+    }
+    return json(res, 200, { name: l.name });
+  }
+
   if (m === 'POST' && p === '/api/vote') {
     const body = await readBody(req);
-    const name = cleanName(body.name);
+    let name = cleanName(body.name);
+    if (body.token) { const l = db.links.find((x) => x.token === String(body.token)); if (l) name = l.name; }
     if (!name) return json(res, 400, { error: 'Vul je naam in.' });
     const round = ensureRound();
     const today = todayStr();
@@ -204,6 +230,21 @@ async function api(req, res, url) {
   if (p.startsWith('/api/admin/')) {
     if (!checkAdmin(req, res)) return;
     if (m === 'GET' && p === '/api/admin/check') return json(res, 200, { ok: true });
+
+    if (m === 'GET' && p === '/api/admin/links') {
+      db.players.slice().forEach((n) => ensureLink(n));
+      save();
+      return json(res, 200, { links: db.links.map((l) => ({ name: l.name, path: linkPath(l) })) });
+    }
+
+    if (m === 'POST' && p === '/api/admin/player-link') {
+      const b = await readBody(req);
+      const name = cleanName(b.name);
+      if (!name) return json(res, 400, { error: 'Vul een naam in.' });
+      ensureLink(name);
+      save();
+      return json(res, 200, publicState());
+    }
 
     if (m === 'POST' && p === '/api/admin/round') {
       const b = await readBody(req);
@@ -244,6 +285,7 @@ async function api(req, res, url) {
       const round = ensureRound();
       round.votes = round.votes.filter((v) => v.name.toLowerCase() !== name);
       db.players = db.players.filter((n) => n.toLowerCase() !== name);
+      db.links = db.links.filter((l) => l.name.toLowerCase() !== name);
       save();
       return json(res, 200, publicState());
     }
@@ -253,7 +295,7 @@ async function api(req, res, url) {
 
 function serveStatic(req, res, url) {
   let rel = decodeURIComponent(url.pathname);
-  if (rel === '/' || rel === '/admin') rel = '/index.html';
+  if (rel === '/' || rel === '/admin' || rel.startsWith('/p/')) rel = '/index.html';
   const file = path.normalize(path.join(PUBLIC_DIR, rel));
   if (!file.startsWith(PUBLIC_DIR + path.sep)) return send(res, 403, 'Forbidden');
   fs.readFile(file, (err, buf) => {

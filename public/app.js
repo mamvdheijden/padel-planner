@@ -47,6 +47,10 @@
   let sel = new Set();
   let dirty = false;
   let name = localStorage.getItem('padel-name') || '';
+  // Persoonlijke link: /p/<naam>-<token>
+  const linkMatch = location.pathname.match(/^\/p\/(?:[^/]*-)?([a-f0-9]{10})\/?$/);
+  let linkToken = linkMatch ? linkMatch[1] : '';
+  let linkResolved = false;
 
   const mine = () => data.round.votes.find((v) => v.name.toLowerCase() === name.toLowerCase());
 
@@ -71,7 +75,7 @@
     });
   }
   function setName(n) {
-    name = n; localStorage.setItem('padel-name', n);
+    name = n; linkToken = ''; localStorage.setItem('padel-name', n);
     sel = new Set((mine() || { dates: [] }).dates); dirty = false;
     renderVote();
   }
@@ -118,7 +122,7 @@
       }).join('')}</div>
       <div class="bar"><div class="inner"><button class="btn" id="save">${saveLabel()}</button></div></div>`;
 
-    document.getElementById('chname').addEventListener('click', () => { name = ''; localStorage.removeItem('padel-name'); renderNameGate(); });
+    document.getElementById('chname').addEventListener('click', () => { name = ''; linkToken = ''; localStorage.removeItem('padel-name'); renderNameGate(); });
     document.getElementById('grid').addEventListener('click', (e) => {
       const b = e.target.closest('.day'); if (!b || b.disabled) return;
       const date = b.dataset.date;
@@ -133,7 +137,7 @@
   async function saveVote() {
     const btn = document.getElementById('save'); btn.disabled = true;
     try {
-      data = await api('POST', '/api/vote', { name, dates: [...sel] });
+      data = await api('POST', '/api/vote', { name, dates: [...sel], token: linkToken || undefined });
       dirty = false; toast('Opgeslagen, bedankt!');
     } catch (e) { toast(e.message, true); }
     renderVote();
@@ -141,12 +145,26 @@
 
   async function loadVote() {
     data = await api('GET', '/api/state');
+    if (linkToken && !linkResolved) {
+      linkResolved = true;
+      try {
+        const w = await api('GET', '/api/whoami?token=' + encodeURIComponent(linkToken));
+        name = w.name; localStorage.setItem('padel-name', name);
+      } catch (e) { linkToken = ''; toast(e.message, true); }
+    }
     if (name && !dirty) sel = new Set((mine() || { dates: [] }).dates);
     renderVote();
   }
 
   // ================= organisator =================
   let pin = sessionStorage.getItem('padel-pin') || '';
+  let links = {};
+  async function fetchLinks() {
+    try { const r = await api('GET', '/api/admin/links', null, pin); links = {}; r.links.forEach((l) => { links[l.name.toLowerCase()] = location.origin + l.path; }); } catch (e) { /* niet fataal */ }
+  }
+  async function copyText(t) {
+    try { await navigator.clipboard.writeText(t); return true; } catch (e) { window.prompt('Kopieer deze link:', t); return false; }
+  }
 
   function renderPinGate(msg) {
     app.innerHTML = `${header()}
@@ -164,7 +182,7 @@
   }
 
   async function adminCall(method, url, body) {
-    try { data = await api(method, url, body, pin); renderAdmin(); return true; }
+    try { data = await api(method, url, body, pin); await fetchLinks(); renderAdmin(); return true; }
     catch (e) {
       if (e.status === 401) { sessionStorage.removeItem('padel-pin'); pin = ''; return renderPinGate(e.message); }
       toast(e.message, true); return false;
@@ -204,7 +222,9 @@
         <button class="btn ghost" id="wa">Stuur naar groep in WhatsApp</button></div></div>` : ''}
       ${data.notVoted.length ? `<div class="card row"><div class="col"><span class="small">Nog niet gestemd</span><span style="font-size:14px;font-weight:600">${data.notVoted.map(esc).join(', ')}</span></div></div>` : ''}
       <details><summary>Spelers beheren</summary>
-        <div class="plist">${data.players.length ? data.players.map((n) => `<div class="row"><span>${esc(n)}</span><button class="btn ghost small danger" data-remove="${esc(n)}" aria-label="Verwijder ${esc(n)}">Verwijder</button></div>`).join('') : '<p class="sub">Nog geen spelers.</p>'}</div>
+        <p class="small">Geef iedereen een persoonlijke link. Die werkt op elk apparaat en herkent de speler zonder naam te kiezen. De gewone link met naam kiezen blijft werken.</p>
+        <form id="addp" class="row" style="align-items:stretch"><input id="addname" type="text" maxlength="30" placeholder="Naam van nieuwe speler" aria-label="Naam van nieuwe speler" style="flex:1;min-width:0"><button class="btn small" type="submit">Toevoegen</button></form>
+        <div class="plist">${data.players.length ? data.players.map((n) => `<div class="prow"><span class="pname">${esc(n)}</span><div class="pbtns"><button class="btn ghost small" data-link="${esc(n)}" aria-label="Kopieer link van ${esc(n)}">Link</button><button class="btn ghost small" data-wal="${esc(n)}" aria-label="Stuur link naar ${esc(n)} via WhatsApp">WhatsApp</button><button class="btn ghost small danger" data-remove="${esc(n)}" aria-label="Verwijder ${esc(n)}">Verwijder</button></div></div>`).join('') : '<p class="sub">Nog geen spelers.</p>'}</div>
       </details>
       <details id="newround"><summary>Nieuwe ronde starten</summary>
         <div class="field"><label class="lbl" for="weeks">Weken vooruit (1 t/m 8)</label><input id="weeks" type="number" min="1" max="8" value="${s.weeks}"></div>
@@ -226,6 +246,21 @@
     app.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => {
       if (confirm(`${b.dataset.remove} en zijn/haar stemmen verwijderen?`)) adminCall('POST', '/api/admin/remove-player', { name: b.dataset.remove });
     }));
+    app.querySelectorAll('[data-link]').forEach((b) => b.addEventListener('click', async () => {
+      const url = links[b.dataset.link.toLowerCase()];
+      if (!url) return toast('Link niet beschikbaar, probeer het opnieuw.', true);
+      if (await copyText(url)) toast('Link van ' + b.dataset.link + ' gekopieerd');
+    }));
+    app.querySelectorAll('[data-wal]').forEach((b) => b.addEventListener('click', () => {
+      const url = links[b.dataset.wal.toLowerCase()];
+      if (!url) return toast('Link niet beschikbaar, probeer het opnieuw.', true);
+      window.open('https://wa.me/?text=' + encodeURIComponent(`Hoi ${b.dataset.wal}, dit is jouw persoonlijke link om je beschikbaarheid voor padel in te vullen: ${url}`), '_blank', 'noopener');
+    }));
+    document.getElementById('addp').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const v = document.getElementById('addname').value.replace(/\s+/g, ' ').trim();
+      if (v && await adminCall('POST', '/api/admin/player-link', { name: v })) toast(v + ' toegevoegd');
+    });
     document.getElementById('days').addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (b) b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true'));
     });
@@ -238,7 +273,7 @@
 
   async function loadAdmin() {
     if (!pin) return renderPinGate();
-    try { data = await api('GET', '/api/state'); await api('GET', '/api/admin/check', null, pin); renderAdmin(); }
+    try { data = await api('GET', '/api/state'); await api('GET', '/api/admin/check', null, pin); await fetchLinks(); renderAdmin(); }
     catch (e) { renderPinGate(e.status === 401 ? e.message : ''); }
   }
 
