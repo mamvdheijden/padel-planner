@@ -96,7 +96,7 @@
     const voted = data.round.votes.length + (mine() ? 0 : (sel.size ? 1 : 0));
 
     const acc = r.accepted;
-    const banner = acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEPLAND</span><b>${esc(short(acc.date))} · ${esc(r.settings.time)}</b>${r.settings.club ? `<span class="small">${esc(r.settings.club)}</span>` : ''}</div>` : '';
+    const banner = acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEPLAND</span><b>${esc(short(acc.date))}</b>${r.settings.club ? `<span class="small">${esc(r.settings.club)}</span>` : ''}</div>` : '';
 
     app.innerHTML = `${header(`<button class="chip" id="chname" aria-label="Naam wijzigen, nu ${esc(name)}"><span class="avatar">${initial(name)}</span>${esc(name)}</button>`)}
       <div class="col" style="gap:6px"><h1>Wanneer kun jij?</h1>
@@ -176,7 +176,7 @@
     const when = r.accepted ? r.accepted.date : (p && p.date);
     const names = r.accepted ? data.rows.find((x) => x.date === r.accepted.date) : p;
     const list = names ? names.names.join(', ') : '';
-    const lead = r.accepted ? `Padel staat gepland op ${short(when)} om ${r.settings.time}` : `Voorstel voor padel: ${when ? short(when) : '...'} om ${r.settings.time}`;
+    const lead = r.accepted ? `Padel staat gepland op ${short(when)}` : `Voorstel voor padel: ${when ? short(when) : '...'}`;
     return `${lead}${r.settings.club ? ' (' + r.settings.club + ')' : ''}.${list ? ' Mee: ' + list + '.' : ''}\nStem op je beschikbare data: ${location.origin}/`;
   }
 
@@ -184,7 +184,7 @@
     const min = data.round.settings.minPlayers;
     const cls = kind === 'main' ? 'proposal' : 'proposal plain';
     const badge = kind === 'main' ? `<span class="badge">Voorstel · ${row.count} / ${min}</span>` : kind === 'reserve' ? `<span class="badge outline">Reserve · ${row.count} / ${min}</span>` : `<span class="badge dim">${row.count} / ${min} · nog ${Math.max(0, min - row.count)} nodig</span>`;
-    return `<div class="${cls}"><div class="row"><div><span class="title">${esc(short(row.date))}</span> <span class="small">${esc(data.round.settings.time)}</span></div>${badge}</div>
+    return `<div class="${cls}"><div class="row"><div><span class="title">${esc(short(row.date))}</span></div>${badge}</div>
       <div class="names">${row.names.map((n) => `<span class="name">${esc(n)}</span>`).join('')}</div>
       ${kind === 'reserve' ? `<button class="btn ghost" data-accept="${row.date}">Neem deze als voorstel</button>` : ''}</div>`;
   }
@@ -195,7 +195,7 @@
     app.innerHTML = `${header(`<a class="link" href="/">Stempagina</a>`)}
       <div class="col" style="gap:6px"><span class="eyebrow">Beheer</span><h1>Mijn voorstel</h1>
       <p class="sub">${r.votes.length} van ${data.players.length} hebben gestemd. Accepteer het voorstel en boek zelf de baan.</p></div>
-      ${acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEACCEPTEERD</span><b>${esc(short(acc.date))} · ${esc(s.time)}</b>${accRow ? `<span class="small">${accRow.names.map(esc).join(', ')}</span>` : ''}<div style="margin-top:8px"><button class="btn ghost small" id="reopen">Ongedaan maken</button></div></div>` : ''}
+      ${acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEACCEPTEERD</span><b>${esc(short(acc.date))}</b>${accRow ? `<span class="small">${accRow.names.map(esc).join(', ')}</span>` : ''}<div style="margin-top:8px"><button class="btn ghost small" id="reopen">Ongedaan maken</button></div></div>` : ''}
       ${p ? candCard(p, 'main') : `<div class="card"><p class="sub">Nog geen datum met ${s.minPlayers} spelers. Zodra die er is, verschijnt hier een voorstel.</p></div>`}
       ${data.reserve ? candCard(data.reserve, 'reserve') : ''}
       ${data.others.map((o) => candCard(o, 'other')).join('')}
@@ -209,8 +209,7 @@
       <details id="newround"><summary>Nieuwe ronde starten</summary>
         <div class="field"><label class="lbl" for="weeks">Weken vooruit (1 t/m 8)</label><input id="weeks" type="number" min="1" max="8" value="${s.weeks}"></div>
         <div class="field"><span class="lbl">Speeldagen</span><div class="dayspick" id="days">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" data-d="${d}" aria-pressed="${s.days.includes(d)}">${DOW_FULL[d]}</button>`).join('')}</div></div>
-        <div class="two"><div class="field"><label class="lbl" for="time">Tijd</label><input id="time" type="time" value="${esc(s.time)}"></div>
-        <div class="field"><label class="lbl" for="min">Spelers nodig</label><input id="min" type="number" min="2" max="12" value="${s.minPlayers}"></div></div>
+        <div class="field"><label class="lbl" for="min">Spelers nodig</label><input id="min" type="number" min="2" max="12" value="${s.minPlayers}"></div>
         <div class="field"><label class="lbl" for="club">Club (optioneel)</label><input id="club" type="text" maxlength="60" value="${esc(s.club)}"></div>
         <label class="check-row"><input id="hol" type="checkbox" ${s.skipHolidays ? 'checked' : ''}> Nederlandse feestdagen overslaan</label>
         <p class="small">De data worden automatisch berekend uit de kalender, vanaf de eerstvolgende maandag. Een nieuwe ronde wist de huidige stemmen.</p>
@@ -233,7 +232,7 @@
     document.getElementById('mk').addEventListener('click', () => {
       if (!confirm('Nieuwe ronde starten? De huidige stemmen worden gearchiveerd.')) return;
       const days = [...document.querySelectorAll('#days button[aria-pressed=true]')].map((b) => Number(b.dataset.d));
-      adminCall('POST', '/api/admin/round', { weeks: document.getElementById('weeks').value, days, time: document.getElementById('time').value, minPlayers: document.getElementById('min').value, club: document.getElementById('club').value, skipHolidays: document.getElementById('hol').checked }).then((ok) => ok && toast('Nieuwe ronde staat klaar.'));
+      adminCall('POST', '/api/admin/round', { weeks: document.getElementById('weeks').value, days, minPlayers: document.getElementById('min').value, club: document.getElementById('club').value, skipHolidays: document.getElementById('hol').checked }).then((ok) => ok && toast('Nieuwe ronde staat klaar.'));
     });
   }
 

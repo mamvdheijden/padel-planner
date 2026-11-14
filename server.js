@@ -14,7 +14,6 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const DEFAULT_SETTINGS = {
   weeks: 3,
   days: [1, 2, 3, 4], // JS: 0 = zondag, 1 = maandag ... 6 = zaterdag
-  time: '20:00',
   minPlayers: 4,
   club: '',
   skipHolidays: true,
@@ -211,7 +210,6 @@ async function api(req, res, url) {
       const s = {
         weeks: Math.min(8, Math.max(1, parseInt(b.weeks, 10) || DEFAULT_SETTINGS.weeks)),
         days: [...new Set((Array.isArray(b.days) ? b.days : []).map(Number).filter((d) => d >= 0 && d <= 6))],
-        time: /^\d{2}:\d{2}$/.test(b.time) ? b.time : DEFAULT_SETTINGS.time,
         minPlayers: Math.min(12, Math.max(2, parseInt(b.minPlayers, 10) || DEFAULT_SETTINGS.minPlayers)),
         club: String(b.club || '').slice(0, 60),
         skipHolidays: b.skipHolidays !== false,

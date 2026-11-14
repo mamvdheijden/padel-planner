@@ -59,4 +59,4 @@ Daarna op `http://localhost:3000` (spelers) en `/admin` (organisator).
 - **Vertrouwen:** een speler kiest zelf zijn naam. Wie dezelfde naam invult, overschrijft die stemmen. Voor een vriendengroep is dat bewust simpel gehouden. Je kunt spelers verwijderen onder "Spelers beheren".
 - **Pincode:** na 10 foute pogingen is er 10 minuten pauze. Kies geen pincode die je elders gebruikt.
 - **Back-up:** kopieer `db.json` uit de data-map af en toe. Dat is alles wat de app bewaart.
-- **Instellingen** (weken, dagen, tijd, aantal spelers, club, feestdagen) pas je aan onder "Nieuwe ronde starten" in `/admin`. Ze worden onthouden voor de volgende rondes.
+- **Instellingen** (weken, dagen, aantal spelers, club, feestdagen) pas je aan onder "Nieuwe ronde starten" in `/admin`. Ze worden onthouden voor de volgende rondes.
