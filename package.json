@@ -1,0 +1,9 @@
+{
+  "name": "padel-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kleine app om padel-avonden te plannen met je groep",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" }
+}
