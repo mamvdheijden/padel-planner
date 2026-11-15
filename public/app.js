@@ -60,9 +60,10 @@
   }
 
   function renderNameGate() {
-    const known = data.players;
+    const locked = (data.locked || []).map((n) => n.toLowerCase());
+    const known = data.players.filter((n) => !locked.includes(n.toLowerCase()));
     app.innerHTML = `${header()}
-      <div class="col" style="gap:6px"><h1>Wie ben jij?</h1><p class="sub">Kies je naam of vul hem in. Je hoeft geen account aan te maken.</p></div>
+      <div class="col" style="gap:6px"><h1>Wie ben jij?</h1><p class="sub">Kies je naam of vul hem in. Je hoeft geen account aan te maken.${locked.length ? ' Heb je een persoonlijke link gekregen? Open dan die link.' : ''}</p></div>
       ${known.length ? `<div class="chips">${known.map((n) => `<button data-pick="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}
       <form id="nameform" class="field"><label class="lbl" for="nm">${known.length ? 'Of een nieuwe naam' : 'Je naam'}</label>
       <input id="nm" type="text" maxlength="30" autocomplete="given-name" required>
@@ -71,6 +72,7 @@
     document.getElementById('nameform').addEventListener('submit', (e) => {
       e.preventDefault();
       const v = document.getElementById('nm').value.replace(/\s+/g, ' ').trim();
+      if (v && locked.includes(v.toLowerCase())) return toast('Voor ' + v + ' is een persoonlijke link nodig. Gebruik de link van de organisator.', true);
       if (v) setName(v);
     });
   }
@@ -152,6 +154,9 @@
         name = w.name; localStorage.setItem('padel-name', name);
       } catch (e) { linkToken = ''; toast(e.message, true); }
     }
+    if (name && !linkToken && (data.locked || []).some((n) => n.toLowerCase() === name.toLowerCase())) {
+      name = ''; localStorage.removeItem('padel-name'); toast('Gebruik je persoonlijke link om te stemmen.', true);
+    }
     if (name && !dirty) sel = new Set((mine() || { dates: [] }).dates);
     renderVote();
   }
@@ -159,8 +164,13 @@
   // ================= organisator =================
   let pin = sessionStorage.getItem('padel-pin') || '';
   let links = {};
+  let issued = {};
   async function fetchLinks() {
-    try { const r = await api('GET', '/api/admin/links', null, pin); links = {}; r.links.forEach((l) => { links[l.name.toLowerCase()] = location.origin + l.path; }); } catch (e) { /* niet fataal */ }
+    try { const r = await api('GET', '/api/admin/links', null, pin); links = {}; issued = {}; r.links.forEach((l) => { links[l.name.toLowerCase()] = location.origin + l.path; issued[l.name.toLowerCase()] = l.issued; }); } catch (e) { /* niet fataal */ }
+  }
+  function markIssued(n) {
+    if (issued[n.toLowerCase()]) return;
+    api('POST', '/api/admin/link-issued', { name: n }, pin).then(fetchLinks).then(renderAdmin).catch(() => {});
   }
   async function copyText(t) {
     try { await navigator.clipboard.writeText(t); return true; } catch (e) { window.prompt('Kopieer deze link:', t); return false; }
@@ -222,9 +232,9 @@
         <button class="btn ghost" id="wa">Stuur naar groep in WhatsApp</button></div></div>` : ''}
       ${data.notVoted.length ? `<div class="card row"><div class="col"><span class="small">Nog niet gestemd</span><span style="font-size:14px;font-weight:600">${data.notVoted.map(esc).join(', ')}</span></div></div>` : ''}
       <details><summary>Spelers beheren</summary>
-        <p class="small">Geef iedereen een persoonlijke link. Die werkt op elk apparaat en herkent de speler zonder naam te kiezen. De gewone link met naam kiezen blijft werken.</p>
+        <p class="small">Geef iedereen een persoonlijke link. Die werkt op elk apparaat en herkent de speler zonder naam te kiezen. Zodra je een link kopieert of verstuurt, kan alleen die speler nog met die link stemmen. Nieuwe namen kunnen nog gewoon op de gewone link.</p>
         <form id="addp" class="row" style="align-items:stretch"><input id="addname" type="text" maxlength="30" placeholder="Naam van nieuwe speler" aria-label="Naam van nieuwe speler" style="flex:1;min-width:0"><button class="btn small" type="submit">Toevoegen</button></form>
-        <div class="plist">${data.players.length ? data.players.map((n) => `<div class="prow"><span class="pname">${esc(n)}</span><div class="pbtns"><button class="btn ghost small" data-link="${esc(n)}" aria-label="Kopieer link van ${esc(n)}">Link</button><button class="btn ghost small" data-wal="${esc(n)}" aria-label="Stuur link naar ${esc(n)} via WhatsApp">WhatsApp</button><button class="btn ghost small danger" data-remove="${esc(n)}" aria-label="Verwijder ${esc(n)}">Verwijder</button></div></div>`).join('') : '<p class="sub">Nog geen spelers.</p>'}</div>
+        <div class="plist">${data.players.length ? data.players.map((n) => `<div class="prow"><span class="pname">${esc(n)}${issued[n.toLowerCase()] ? ' <span class="small">· link gedeeld</span>' : ''}</span><div class="pbtns"><button class="btn ghost small" data-link="${esc(n)}" aria-label="Kopieer link van ${esc(n)}">Link</button><button class="btn ghost small" data-wal="${esc(n)}" aria-label="Stuur link naar ${esc(n)} via WhatsApp">WhatsApp</button><button class="btn ghost small danger" data-remove="${esc(n)}" aria-label="Verwijder ${esc(n)}">Verwijder</button></div></div>`).join('') : '<p class="sub">Nog geen spelers.</p>'}</div>
       </details>
       <details id="newround"><summary>Nieuwe ronde starten</summary>
         <div class="field"><label class="lbl" for="weeks">Weken vooruit (1 t/m 8)</label><input id="weeks" type="number" min="1" max="8" value="${s.weeks}"></div>
@@ -250,11 +260,13 @@
       const url = links[b.dataset.link.toLowerCase()];
       if (!url) return toast('Link niet beschikbaar, probeer het opnieuw.', true);
       if (await copyText(url)) toast('Link van ' + b.dataset.link + ' gekopieerd');
+      markIssued(b.dataset.link);
     }));
     app.querySelectorAll('[data-wal]').forEach((b) => b.addEventListener('click', () => {
       const url = links[b.dataset.wal.toLowerCase()];
       if (!url) return toast('Link niet beschikbaar, probeer het opnieuw.', true);
       window.open('https://wa.me/?text=' + encodeURIComponent(`Hoi ${b.dataset.wal}, dit is jouw persoonlijke link om je beschikbaarheid voor padel in te vullen: ${url}`), '_blank', 'noopener');
+      markIssued(b.dataset.wal);
     }));
     document.getElementById('addp').addEventListener('submit', async (e) => {
       e.preventDefault();

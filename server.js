@@ -122,6 +122,7 @@ function publicState() {
   return {
     today: todayStr(),
     players: [...known].sort((a, b) => a.localeCompare(b, 'nl')),
+    locked: db.links.filter((l) => l.issued).map((l) => l.name),
     notVoted: [...known].filter((n) => !voted.has(n.toLowerCase())).sort((a, b) => a.localeCompare(b, 'nl')),
     round: {
       id: round.id,
@@ -215,6 +216,10 @@ async function api(req, res, url) {
     let name = cleanName(body.name);
     if (body.token) { const l = db.links.find((x) => x.token === String(body.token)); if (l) name = l.name; }
     if (!name) return json(res, 400, { error: 'Vul je naam in.' });
+    const lk = db.links.find((x) => x.name.toLowerCase() === name.toLowerCase());
+    if (lk && lk.issued && String(body.token || '') !== lk.token) {
+      return json(res, 403, { error: `Voor ${lk.name} is een persoonlijke link nodig. Gebruik de link die je van de organisator hebt gekregen.` });
+    }
     const round = ensureRound();
     const today = todayStr();
     const dates = [...new Set((Array.isArray(body.dates) ? body.dates : []).filter((d) => round.dates.includes(d) && d >= today))];
@@ -234,7 +239,16 @@ async function api(req, res, url) {
     if (m === 'GET' && p === '/api/admin/links') {
       db.players.slice().forEach((n) => ensureLink(n));
       save();
-      return json(res, 200, { links: db.links.map((l) => ({ name: l.name, path: linkPath(l) })) });
+      return json(res, 200, { links: db.links.map((l) => ({ name: l.name, path: linkPath(l), issued: !!l.issued })) });
+    }
+
+    if (m === 'POST' && p === '/api/admin/link-issued') {
+      const b = await readBody(req);
+      const l = db.links.find((x) => x.name.toLowerCase() === cleanName(b.name).toLowerCase());
+      if (!l) return json(res, 404, { error: 'Onbekende speler.' });
+      l.issued = true;
+      save();
+      return json(res, 200, { ok: true });
     }
 
     if (m === 'POST' && p === '/api/admin/player-link') {
