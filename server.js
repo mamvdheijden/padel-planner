@@ -336,7 +336,7 @@ function serveStatic(req, res, url) {
   fs.readFile(file, (err, buf) => {
     if (err) return send(res, 404, 'Niet gevonden');
     const type = MIME[path.extname(file)] || 'application/octet-stream';
-    send(res, 200, buf, { 'Content-Type': type, 'Cache-Control': file.endsWith('index.html') ? 'no-cache' : 'public, max-age=3600' });
+    send(res, 200, buf, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
   });
 }
 
