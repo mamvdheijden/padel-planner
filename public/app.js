@@ -31,9 +31,11 @@
     toastTimer = setTimeout(() => { toastEl.className = 'toast'; }, 2600);
   }
 
+  let playerToken = '';
   async function api(method, url, body, pin) {
     const headers = { 'Content-Type': 'application/json' };
     if (pin) headers['x-admin-pin'] = pin;
+    else if (playerToken) headers['x-player-token'] = playerToken;
     const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { const e = new Error(data.error || 'Er ging iets mis.'); e.status = res.status; throw e; }
@@ -43,14 +45,13 @@
   const header = (right) => `<div class="top"><a class="brand" href="/"><span class="logo">${ICON_LOGO}</span>Padel Planner</a>${right || ''}</div>`;
 
   // ================= speler: stemmen =================
+  // Toegang alleen met een persoonlijke link: /p/<naam>-<code>. De code wordt op dit apparaat onthouden.
   let data = null;
   let sel = new Set();
   let dirty = false;
-  let name = localStorage.getItem('padel-name') || '';
-  // Persoonlijke link: /p/<naam>-<token>
+  let name = '';
   const linkMatch = location.pathname.match(/^\/p\/(?:[^/]*-)?([a-f0-9]{10})\/?$/);
-  let linkToken = linkMatch ? linkMatch[1] : '';
-  let linkResolved = false;
+  playerToken = linkMatch ? linkMatch[1] : (localStorage.getItem('padel-token') || '');
 
   const mine = () => data.round.votes.find((v) => v.name.toLowerCase() === name.toLowerCase());
 
@@ -59,31 +60,13 @@
     return others + (sel.has(date) ? 1 : 0);
   }
 
-  function renderNameGate() {
-    const locked = (data.locked || []).map((n) => n.toLowerCase());
-    const known = data.players.filter((n) => !locked.includes(n.toLowerCase()));
+  function renderNoAccess(msg) {
     app.innerHTML = `${header()}
-      <div class="col" style="gap:6px"><h1>Wie ben jij?</h1><p class="sub">Kies je naam of vul hem in. Je hoeft geen account aan te maken.${locked.length ? ' Heb je een persoonlijke link gekregen? Open dan die link.' : ''}</p></div>
-      ${known.length ? `<div class="chips">${known.map((n) => `<button data-pick="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}
-      <form id="nameform" class="field"><label class="lbl" for="nm">${known.length ? 'Of een nieuwe naam' : 'Je naam'}</label>
-      <input id="nm" type="text" maxlength="30" autocomplete="given-name" required>
-      <button class="btn" type="submit"><span>Verder</span>${ICON_ARROW}</button></form>`;
-    app.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => setName(b.dataset.pick)));
-    document.getElementById('nameform').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const v = document.getElementById('nm').value.replace(/\s+/g, ' ').trim();
-      if (v && locked.includes(v.toLowerCase())) return toast('Voor ' + v + ' is een persoonlijke link nodig. Gebruik de link van de organisator.', true);
-      if (v) setName(v);
-    });
-  }
-  function setName(n) {
-    name = n; linkToken = ''; localStorage.setItem('padel-name', n);
-    sel = new Set((mine() || { dates: [] }).dates); dirty = false;
-    renderVote();
+      <div class="col" style="gap:6px"><h1>Alleen met een link</h1>
+      <p class="sub">${esc(msg || 'Deze pagina is alleen toegankelijk met een persoonlijke link.')} Vraag de organisator om jouw link.</p></div>`;
   }
 
   function renderVote() {
-    if (!name) return renderNameGate();
     const r = data.round;
     const min = r.settings.minPlayers;
     const today = data.today;
@@ -104,7 +87,7 @@
     const acc = r.accepted;
     const banner = acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEPLAND</span><b>${esc(short(acc.date))}</b>${r.settings.club ? `<span class="small">${esc(r.settings.club)}</span>` : ''}</div>` : '';
 
-    app.innerHTML = `${header(`<button class="chip" id="chname" aria-label="Naam wijzigen, nu ${esc(name)}"><span class="avatar">${initial(name)}</span>${esc(name)}</button>`)}
+    app.innerHTML = `${header(`<div class="chip"><span class="avatar">${initial(name)}</span>${esc(name)}</div>`)}
       <div class="col" style="gap:6px"><h1>Wanneer kun jij?</h1>
       <p class="sub">Tik op de dagen die voor jou werken. Bij ${min} spelers doet de app een voorstel aan de organisator.</p></div>
       ${banner}
@@ -124,7 +107,6 @@
       }).join('')}</div>
       <div class="bar"><div class="inner"><button class="btn" id="save">${saveLabel()}</button></div></div>`;
 
-    document.getElementById('chname').addEventListener('click', () => { name = ''; linkToken = ''; localStorage.removeItem('padel-name'); renderNameGate(); });
     document.getElementById('grid').addEventListener('click', (e) => {
       const b = e.target.closest('.day'); if (!b || b.disabled) return;
       const date = b.dataset.date;
@@ -139,25 +121,26 @@
   async function saveVote() {
     const btn = document.getElementById('save'); btn.disabled = true;
     try {
-      data = await api('POST', '/api/vote', { name, dates: [...sel], token: linkToken || undefined });
+      data = await api('POST', '/api/vote', { dates: [...sel] });
       dirty = false; toast('Opgeslagen, bedankt!');
-    } catch (e) { toast(e.message, true); }
+    } catch (e) {
+      if (e.status === 401) return renderNoAccess('Deze link is niet (meer) geldig.');
+      toast(e.message, true);
+    }
     renderVote();
   }
 
   async function loadVote() {
-    data = await api('GET', '/api/state');
-    if (linkToken && !linkResolved) {
-      linkResolved = true;
-      try {
-        const w = await api('GET', '/api/whoami?token=' + encodeURIComponent(linkToken));
-        name = w.name; localStorage.setItem('padel-name', name);
-      } catch (e) { linkToken = ''; toast(e.message, true); }
+    if (!playerToken) return renderNoAccess();
+    try {
+      const w = await api('GET', '/api/whoami?token=' + encodeURIComponent(playerToken));
+      name = w.name; localStorage.setItem('padel-token', playerToken);
+      data = await api('GET', '/api/state');
+    } catch (e) {
+      if (e.status === 404 || e.status === 401) { localStorage.removeItem('padel-token'); playerToken = ''; return renderNoAccess('Deze link is niet (meer) geldig.'); }
+      throw e;
     }
-    if (name && !linkToken && (data.locked || []).some((n) => n.toLowerCase() === name.toLowerCase())) {
-      name = ''; localStorage.removeItem('padel-name'); toast('Gebruik je persoonlijke link om te stemmen.', true);
-    }
-    if (name && !dirty) sel = new Set((mine() || { dates: [] }).dates);
+    if (!dirty) sel = new Set((mine() || { dates: [] }).dates);
     renderVote();
   }
 
@@ -205,7 +188,7 @@
     const names = r.accepted ? data.rows.find((x) => x.date === r.accepted.date) : p;
     const list = names ? names.names.join(', ') : '';
     const lead = r.accepted ? `Padel staat gepland op ${short(when)}` : `Voorstel voor padel: ${when ? short(when) : '...'}`;
-    return `${lead}${r.settings.club ? ' (' + r.settings.club + ')' : ''}.${list ? ' Mee: ' + list + '.' : ''}\nStem op je beschikbare data: ${location.origin}/`;
+    return `${lead}${r.settings.club ? ' (' + r.settings.club + ')' : ''}.${list ? ' Mee: ' + list + '.' : ''}\nStem via je persoonlijke link.`;
   }
 
   function candCard(row, kind) {
@@ -220,7 +203,7 @@
   function renderAdmin() {
     const r = data.round, s = r.settings, p = data.proposal, acc = r.accepted;
     const accRow = acc ? data.rows.find((x) => x.date === acc.date) : null;
-    app.innerHTML = `${header(`<a class="link" href="/">Stempagina</a>`)}
+    app.innerHTML = `${header()}
       <div class="col" style="gap:6px"><span class="eyebrow">Beheer</span><h1>Mijn voorstel</h1>
       <p class="sub">${r.votes.length} van ${data.players.length} hebben gestemd. Accepteer het voorstel en boek zelf de baan.</p></div>
       ${acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEACCEPTEERD</span><b>${esc(short(acc.date))}</b>${accRow ? `<span class="small">${accRow.names.map(esc).join(', ')}</span>` : ''}<div style="margin-top:8px"><button class="btn ghost small" id="reopen">Ongedaan maken</button></div></div>` : ''}
@@ -232,7 +215,7 @@
         <button class="btn ghost" id="wa">Stuur naar groep in WhatsApp</button></div></div>` : ''}
       ${data.notVoted.length ? `<div class="card row"><div class="col"><span class="small">Nog niet gestemd</span><span style="font-size:14px;font-weight:600">${data.notVoted.map(esc).join(', ')}</span></div></div>` : ''}
       <details><summary>Spelers beheren</summary>
-        <p class="small">Geef iedereen een persoonlijke link. Die werkt op elk apparaat en herkent de speler zonder naam te kiezen. Zodra je een link kopieert of verstuurt, kan alleen die speler nog met die link stemmen. Nieuwe namen kunnen nog gewoon op de gewone link.</p>
+        <p class="small">Alleen spelers met een persoonlijke link kunnen de app openen en stemmen. Voeg iedereen toe en stuur hem zijn eigen link. Die werkt op elk apparaat.</p>
         <form id="addp" class="row" style="align-items:stretch"><input id="addname" type="text" maxlength="30" placeholder="Naam van nieuwe speler" aria-label="Naam van nieuwe speler" style="flex:1;min-width:0"><button class="btn small" type="submit">Toevoegen</button></form>
         <div class="plist">${data.players.length ? data.players.map((n) => `<div class="prow"><span class="pname">${esc(n)}${issued[n.toLowerCase()] ? ' <span class="small">· link gedeeld</span>' : ''}</span><div class="pbtns"><button class="btn ghost small" data-link="${esc(n)}" aria-label="Kopieer link van ${esc(n)}">Link</button><button class="btn ghost small" data-wal="${esc(n)}" aria-label="Stuur link naar ${esc(n)} via WhatsApp">WhatsApp</button><button class="btn ghost small danger" data-remove="${esc(n)}" aria-label="Verwijder ${esc(n)}">Verwijder</button></div></div>`).join('') : '<p class="sub">Nog geen spelers.</p>'}</div>
       </details>
@@ -285,7 +268,7 @@
 
   async function loadAdmin() {
     if (!pin) return renderPinGate();
-    try { data = await api('GET', '/api/state'); await api('GET', '/api/admin/check', null, pin); await fetchLinks(); renderAdmin(); }
+    try { data = await api('GET', '/api/state', null, pin); await api('GET', '/api/admin/check', null, pin); await fetchLinks(); renderAdmin(); }
     catch (e) { renderPinGate(e.status === 401 ? e.message : ''); }
   }
 

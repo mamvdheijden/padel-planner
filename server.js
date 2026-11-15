@@ -177,6 +177,26 @@ function checkAdmin(req, res) {
   return true;
 }
 
+function pinValid(req) {
+  if (!ADMIN_PIN) return false;
+  const given = Buffer.from(String(req.headers['x-admin-pin'] || ''));
+  const real = Buffer.from(ADMIN_PIN);
+  return given.length === real.length && crypto.timingSafeEqual(given, real);
+}
+function tooMany(req) {
+  const f = fails.get('w' + clientIp(req));
+  return !!f && f.count >= 20 && Date.now() - f.first < 10 * 60 * 1000;
+}
+function bump(req) {
+  const key = 'w' + clientIp(req), now = Date.now(), f = fails.get(key);
+  if (!f || now - f.first > 10 * 60 * 1000) fails.set(key, { count: 1, first: now }); else f.count++;
+}
+// Alleen een geldige persoonlijke token geeft toegang (header of ?token=)
+function playerFor(req, url) {
+  const t = String(req.headers['x-player-token'] || (url && url.searchParams.get('token')) || '');
+  return /^[a-f0-9]{10}$/.test(t) ? db.links.find((x) => x.token === t) || null : null;
+}
+
 const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 30);
 
 // Persoonlijke links: /p/<naam>-<token>. De token is de enige geheime component.
@@ -195,7 +215,11 @@ async function api(req, res, url) {
   const m = req.method;
   const p = url.pathname;
 
-  if (m === 'GET' && p === '/api/state') return json(res, 200, publicState());
+  if (m === 'GET' && p === '/api/state') {
+    if (tooMany(req)) return json(res, 429, { error: 'Te veel pogingen. Probeer het later opnieuw.' });
+    if (!playerFor(req, url) && !pinValid(req)) { bump(req); return json(res, 401, { error: 'Alleen toegankelijk met een persoonlijke link.' }); }
+    return json(res, 200, publicState());
+  }
 
   if (m === 'GET' && p === '/api/whoami') {
     const key = 'w' + clientIp(req);
@@ -213,13 +237,10 @@ async function api(req, res, url) {
 
   if (m === 'POST' && p === '/api/vote') {
     const body = await readBody(req);
-    let name = cleanName(body.name);
-    if (body.token) { const l = db.links.find((x) => x.token === String(body.token)); if (l) name = l.name; }
-    if (!name) return json(res, 400, { error: 'Vul je naam in.' });
-    const lk = db.links.find((x) => x.name.toLowerCase() === name.toLowerCase());
-    if (lk && lk.issued && String(body.token || '') !== lk.token) {
-      return json(res, 403, { error: `Voor ${lk.name} is een persoonlijke link nodig. Gebruik de link die je van de organisator hebt gekregen.` });
-    }
+    if (tooMany(req)) return json(res, 429, { error: 'Te veel pogingen. Probeer het later opnieuw.' });
+    const owner = playerFor(req, url);
+    if (!owner) { bump(req); return json(res, 401, { error: 'Je hebt een persoonlijke link nodig om te stemmen.' }); }
+    const name = owner.name;
     const round = ensureRound();
     const today = todayStr();
     const dates = [...new Set((Array.isArray(body.dates) ? body.dates : []).filter((d) => round.dates.includes(d) && d >= today))];

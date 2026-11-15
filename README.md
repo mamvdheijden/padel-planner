@@ -2,7 +2,7 @@
 
 Kleine app om padel-avonden te plannen met je groep. Spelers tikken de dagen aan waarop ze kunnen; bij genoeg spelers doet de app een voorstel dat de organisator accepteert. De app boekt niets zelf.
 
-- **Spelers:** `https://jouw-domein/` (geen account nodig, alleen een naam)
+- **Spelers:** alleen via hun persoonlijke link (`https://jouw-domein/p/naam-code`). Zonder link ziet een bezoeker niets en kan hij niet stemmen.
 - **Organisator:** `https://jouw-domein/admin` (met pincode)
 - **Data:** worden elke keer uit de kalender berekend: de eerstvolgende maandag, het ingestelde aantal weken, alleen de gekozen dagen (standaard ma t/m do) en zonder Nederlandse feestdagen. Als de ronde voorbij is, start er vanzelf een nieuwe.
 - **Techniek:** Node.js zonder externe packages, gegevens in één bestand (`/data/db.json`).
@@ -56,8 +56,8 @@ Daarna op `http://localhost:3000` (spelers) en `/admin` (organisator).
 
 ## Goed om te weten
 
-- **Persoonlijke links:** onder "Spelers beheren" in `/admin` krijgt elke speler een eigen link (`/p/naam-code`). Die herkent de speler op elk apparaat. Zodra je een link kopieert of verstuurt, kan alleen die speler nog met die link stemmen. Namen zonder gedeelde link kunnen nog gewoon op de gewone link, waarbij je je naam kiest.
-- **Vertrouwen:** een speler kiest zelf zijn naam. Wie dezelfde naam invult, overschrijft die stemmen. Voor een vriendengroep is dat bewust simpel gehouden. Je kunt spelers verwijderen onder "Spelers beheren".
+- **Persoonlijke links:** onder "Spelers beheren" in `/admin` voeg je spelers toe en kopieer of verstuur je hun link. De link werkt op elk apparaat en wordt onthouden, dus later terugkomen via `/` werkt ook op dat apparaat. Verwijder je een speler, dan vervalt zijn link.
+- **Toegang:** de gegevens zijn alleen op te vragen met een geldige link-code of de beheerpincode. Wie een link doorstuurt, geeft toegang als die speler. Verwijder een speler om zijn link ongeldig te maken.
 - **Pincode:** na 10 foute pogingen is er 10 minuten pauze. Kies geen pincode die je elders gebruikt.
 - **Back-up:** kopieer `db.json` uit de data-map af en toe. Dat is alles wat de app bewaart.
 - **Instellingen** (weken, dagen, aantal spelers, club, feestdagen) pas je aan onder "Nieuwe ronde starten" in `/admin`. Ze worden onthouden voor de volgende rondes.
