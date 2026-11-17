@@ -50,10 +50,17 @@
   let sel = new Set();
   let dirty = false;
   let name = '';
+  let none = false;
+  let time = '';
   const linkMatch = location.pathname.match(/^\/p\/(?:[^/]*-)?([a-f0-9]{10})\/?$/);
   playerToken = linkMatch ? linkMatch[1] : (localStorage.getItem('padel-token') || '');
 
   const mine = () => data.round.votes.find((v) => v.name.toLowerCase() === name.toLowerCase());
+
+  function syncFromMine() {
+    const v = mine();
+    sel = new Set(v ? v.dates : []); none = !!(v && v.none); time = (v && v.time) || '';
+  }
 
   function countsFor(date) {
     const others = data.round.votes.filter((v) => v.name.toLowerCase() !== name.toLowerCase() && v.dates.includes(date)).length;
@@ -69,6 +76,7 @@
   function renderVote() {
     const r = data.round;
     const min = r.settings.minPlayers;
+    const times = r.settings.times || ['20:30', '21:00'];
     const today = data.today;
     // groepeer per week
     const weeks = [];
@@ -82,7 +90,7 @@
     }
     const readyDates = r.dates.filter((d) => d >= today && countsFor(d) >= min);
     const known = data.players.length;
-    const voted = data.round.votes.length + (mine() ? 0 : (sel.size ? 1 : 0));
+    const voted = data.round.votes.length + (mine() ? 0 : (sel.size || none ? 1 : 0));
 
     const acc = r.accepted;
     const banner = acc ? `<div class="banner"><span class="small" style="color:var(--lime);font-weight:600">GEPLAND</span><b>${esc(short(acc.date))}</b>${r.settings.club ? `<span class="small">${esc(r.settings.club)}</span>` : ''}</div>` : '';
@@ -105,23 +113,36 @@
             <span class="lab">${isReady ? 'Compleet' : total + ' / ' + min}</span>${isMine ? `<span class="check">${ICON_CHECK}</span>` : ''}</button>`;
         }).join('');
       }).join('')}</div>
-      <div class="bar"><div class="inner"><button class="btn" id="save">${saveLabel()}</button></div></div>`;
+      <div class="card col" style="gap:12px">
+        <button class="none" id="none" aria-pressed="${none}"><span class="box">${none ? ICON_CHECK : ''}</span><span>Ik kan geen enkele datum</span></button>
+        ${none ? '' : `<div class="field"><span class="lbl">Voorkeurstijd</span><div class="seg" id="seg">${[...times.map((t) => [t, t]), ['', 'Maakt niet uit']].map(([v, l]) => `<button type="button" data-time="${esc(v)}" aria-pressed="${time === v}">${esc(l)}</button>`).join('')}</div></div>`}
+      </div>
+      <div class="bar"><div class="inner"><button class="btn" id="save" ${!none && !sel.size ? 'disabled' : ''}>${saveLabel()}</button></div></div>`;
 
     document.getElementById('grid').addEventListener('click', (e) => {
       const b = e.target.closest('.day'); if (!b || b.disabled) return;
       const date = b.dataset.date;
+      none = false;
       sel.has(date) ? sel.delete(date) : sel.add(date);
       dirty = true;
       const y = window.scrollY; renderVote(); window.scrollTo(0, y);
     });
+    const again = () => { const y = window.scrollY; renderVote(); window.scrollTo(0, y); };
+    document.getElementById('none').addEventListener('click', () => { none = !none; if (none) sel.clear(); dirty = true; again(); });
+    const seg = document.getElementById('seg');
+    if (seg) seg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; time = b.dataset.time; dirty = true; again(); });
     document.getElementById('save').addEventListener('click', saveVote);
   }
-  const saveLabel = () => (dirty ? `Opslaan · ${sel.size} ${sel.size === 1 ? 'datum' : 'data'}` : (mine() ? `Opgeslagen · ${sel.size} ${sel.size === 1 ? 'datum' : 'data'}` : `Opslaan · ${sel.size} ${sel.size === 1 ? 'datum' : 'data'}`));
+  const saveLabel = () => {
+    if (!none && !sel.size) return 'Kies minstens één datum';
+    const n = none ? 'geen datum' : `${sel.size} ${sel.size === 1 ? 'datum' : 'data'}`;
+    return `${dirty || !mine() ? 'Opslaan' : 'Opgeslagen'} · ${n}`;
+  };
 
   async function saveVote() {
     const btn = document.getElementById('save'); btn.disabled = true;
     try {
-      data = await api('POST', '/api/vote', { dates: [...sel] });
+      data = await api('POST', '/api/vote', { dates: [...sel], none, time });
       dirty = false; toast('Opgeslagen, bedankt!');
     } catch (e) {
       if (e.status === 401) return renderNoAccess('Deze link is niet (meer) geldig.');
@@ -140,7 +161,7 @@
       if (e.status === 404 || e.status === 401) { localStorage.removeItem('padel-token'); playerToken = ''; return renderNoAccess('Deze link is niet (meer) geldig.'); }
       throw e;
     }
-    if (!dirty) sel = new Set((mine() || { dates: [] }).dates);
+    if (!dirty) syncFromMine();
     renderVote();
   }
 
@@ -182,13 +203,20 @@
     }
   }
 
+  function timeSummary(detail) {
+    const c = {};
+    (detail || []).forEach((d) => { const k = d.time || 'maakt niet uit'; c[k] = (c[k] || 0) + 1; });
+    return Object.keys(c).sort().map((k) => `${k} (${c[k]})`).join(' · ');
+  }
+
   function shareText() {
     const r = data.round, p = data.proposal;
     const when = r.accepted ? r.accepted.date : (p && p.date);
     const names = r.accepted ? data.rows.find((x) => x.date === r.accepted.date) : p;
     const list = names ? names.names.join(', ') : '';
     const lead = r.accepted ? `Padel staat gepland op ${short(when)}` : `Voorstel voor padel: ${when ? short(when) : '...'}`;
-    return `${lead}${r.settings.club ? ' (' + r.settings.club + ')' : ''}.${list ? ' Mee: ' + list + '.' : ''}\nStem via je persoonlijke link.`;
+    const tl = names ? timeSummary(names.detail) : '';
+    return `${lead}${r.settings.club ? ' (' + r.settings.club + ')' : ''}.${list ? ' Mee: ' + list + '.' : ''}${tl ? ' Voorkeurstijd: ' + tl + '.' : ''}\nStem via je persoonlijke link.`;
   }
 
   function candCard(row, kind) {
@@ -196,7 +224,8 @@
     const cls = kind === 'main' ? 'proposal' : 'proposal plain';
     const badge = kind === 'main' ? `<span class="badge">Voorstel · ${row.count} / ${min}</span>` : kind === 'reserve' ? `<span class="badge outline">Reserve · ${row.count} / ${min}</span>` : `<span class="badge dim">${row.count} / ${min} · nog ${Math.max(0, min - row.count)} nodig</span>`;
     return `<div class="${cls}"><div class="row"><div><span class="title">${esc(short(row.date))}</span></div>${badge}</div>
-      <div class="names">${row.names.map((n) => `<span class="name">${esc(n)}</span>`).join('')}</div>
+      <div class="names">${(row.detail || row.names.map((n) => ({ name: n, time: '' }))).map((d) => `<span class="name">${esc(d.name)}${d.time ? ' · ' + esc(d.time) : ''}</span>`).join('')}</div>
+      ${timeSummary(row.detail) ? `<p class="small">Voorkeurstijd: ${esc(timeSummary(row.detail))}</p>` : ''}
       ${kind === 'reserve' ? `<button class="btn ghost" data-accept="${row.date}">Neem deze als voorstel</button>` : ''}</div>`;
   }
 
@@ -214,6 +243,7 @@
         ${!acc && p ? `<button class="btn" id="accept" data-accept="${p.date}"><span>Accepteer ${esc(short(p.date))}</span></button>` : ''}
         <button class="btn ghost" id="wa">Stuur naar groep in WhatsApp</button></div></div>` : ''}
       ${data.notVoted.length ? `<div class="card row"><div class="col"><span class="small">Nog niet gestemd</span><span style="font-size:14px;font-weight:600">${data.notVoted.map(esc).join(', ')}</span></div></div>` : ''}
+      ${data.cannot && data.cannot.length ? `<div class="card row"><div class="col"><span class="small">Kunnen geen enkele datum</span><span style="font-size:14px;font-weight:600">${data.cannot.map(esc).join(', ')}</span></div></div>` : ''}
       <details><summary>Spelers beheren</summary>
         <p class="small">Alleen spelers met een persoonlijke link kunnen de app openen en stemmen. Voeg iedereen toe en stuur hem zijn eigen link. Die werkt op elk apparaat.</p>
         <form id="addp" class="row" style="align-items:stretch"><input id="addname" type="text" maxlength="30" placeholder="Naam van nieuwe speler" aria-label="Naam van nieuwe speler" style="flex:1;min-width:0"><button class="btn small" type="submit">Toevoegen</button></form>
@@ -223,6 +253,7 @@
         <div class="field"><label class="lbl" for="weeks">Weken vooruit (1 t/m 8)</label><input id="weeks" type="number" min="1" max="8" value="${s.weeks}"></div>
         <div class="field"><span class="lbl">Speeldagen</span><div class="dayspick" id="days">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" data-d="${d}" aria-pressed="${s.days.includes(d)}">${DOW_FULL[d]}</button>`).join('')}</div></div>
         <div class="field"><label class="lbl" for="min">Spelers nodig</label><input id="min" type="number" min="2" max="12" value="${s.minPlayers}"></div>
+        <div class="field"><label class="lbl" for="times">Voorkeurstijden (met komma's)</label><input id="times" type="text" value="${esc((s.times || ['20:30', '21:00']).join(', '))}"></div>
         <div class="field"><label class="lbl" for="club">Club (optioneel)</label><input id="club" type="text" maxlength="60" value="${esc(s.club)}"></div>
         <label class="check-row"><input id="hol" type="checkbox" ${s.skipHolidays ? 'checked' : ''}> Nederlandse feestdagen overslaan</label>
         <p class="small">De data worden automatisch berekend uit de kalender, vanaf de eerstvolgende maandag. Een nieuwe ronde wist de huidige stemmen.</p>
@@ -262,7 +293,7 @@
     document.getElementById('mk').addEventListener('click', () => {
       if (!confirm('Nieuwe ronde starten? De huidige stemmen worden gearchiveerd.')) return;
       const days = [...document.querySelectorAll('#days button[aria-pressed=true]')].map((b) => Number(b.dataset.d));
-      adminCall('POST', '/api/admin/round', { weeks: document.getElementById('weeks').value, days, minPlayers: document.getElementById('min').value, club: document.getElementById('club').value, skipHolidays: document.getElementById('hol').checked }).then((ok) => ok && toast('Nieuwe ronde staat klaar.'));
+      adminCall('POST', '/api/admin/round', { weeks: document.getElementById('weeks').value, days, minPlayers: document.getElementById('min').value, times: document.getElementById('times').value, club: document.getElementById('club').value, skipHolidays: document.getElementById('hol').checked }).then((ok) => ok && toast('Nieuwe ronde staat klaar.'));
     });
   }
 

@@ -4,6 +4,7 @@ Kleine app om padel-avonden te plannen met je groep. Spelers tikken de dagen aan
 
 - **Spelers:** alleen via hun persoonlijke link (`https://jouw-domein/p/naam-code`). Zonder link ziet een bezoeker niets en kan hij niet stemmen.
 - **Organisator:** `https://jouw-domein/admin` (met pincode)
+- **Per speler:** de dagen waarop hij kan, of het vinkje "Ik kan geen enkele datum" (dan telt hij als gestemd), en een voorkeurstijd (standaard 20:30 of 21:00, of "maakt niet uit"). De organisator ziet de voorkeurstijden bij het voorstel. De tijden zijn aan te passen onder "Nieuwe ronde starten".
 - **Data:** worden elke keer uit de kalender berekend: de eerstvolgende maandag, het ingestelde aantal weken, alleen de gekozen dagen (standaard ma t/m do) en zonder Nederlandse feestdagen. Als de ronde voorbij is, start er vanzelf een nieuwe.
 - **Techniek:** Node.js zonder externe packages, gegevens in één bestand (`/data/db.json`).
 

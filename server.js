@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = {
   weeks: 3,
   days: [1, 2, 3, 4], // JS: 0 = zondag, 1 = maandag ... 6 = zaterdag
   minPlayers: 4,
+  times: ['20:30', '21:00'], // voorkeurstijden waaruit spelers kunnen kiezen
   club: '',
   skipHolidays: true,
 };
@@ -107,7 +108,8 @@ function ranking(round) {
   const min = round.settings.minPlayers;
   const rows = round.dates.filter((d) => d >= today).map((date) => {
     const names = round.votes.filter((v) => v.dates.includes(date)).map((v) => v.name);
-    return { date, names, count: names.length, ready: names.length >= min };
+    const detail = round.votes.filter((v) => v.dates.includes(date)).map((v) => ({ name: v.name, time: v.time || '' }));
+    return { date, names, detail, count: names.length, ready: names.length >= min };
   });
   const ranked = rows.filter((r) => r.count > 0).sort((a, b) => b.count - a.count || a.date.localeCompare(b.date));
   const ready = ranked.filter((r) => r.ready);
@@ -124,12 +126,13 @@ function publicState() {
     players: [...known].sort((a, b) => a.localeCompare(b, 'nl')),
     locked: db.links.filter((l) => l.issued).map((l) => l.name),
     notVoted: [...known].filter((n) => !voted.has(n.toLowerCase())).sort((a, b) => a.localeCompare(b, 'nl')),
+    cannot: round.votes.filter((v) => v.none).map((v) => v.name),
     round: {
       id: round.id,
       dates: round.dates,
-      settings: round.settings,
+      settings: { times: DEFAULT_SETTINGS.times, ...round.settings },
       accepted: round.accepted,
-      votes: round.votes.map((v) => ({ name: v.name, dates: v.dates })),
+      votes: round.votes.map((v) => ({ name: v.name, dates: v.dates, none: !!v.none, time: v.time || '' })),
     },
     ...ranking(round),
   };
@@ -243,11 +246,14 @@ async function api(req, res, url) {
     const name = owner.name;
     const round = ensureRound();
     const today = todayStr();
-    const dates = [...new Set((Array.isArray(body.dates) ? body.dates : []).filter((d) => round.dates.includes(d) && d >= today))];
+    const none = body.none === true;
+    const dates = none ? [] : [...new Set((Array.isArray(body.dates) ? body.dates : []).filter((d) => round.dates.includes(d) && d >= today))];
+    if (!none && !dates.length) return json(res, 400, { error: "Kies minstens één datum, of vink 'Ik kan geen enkele datum' aan." });
+    const time = (round.settings.times || DEFAULT_SETTINGS.times).includes(body.time) ? body.time : '';
     const idx = round.votes.findIndex((v) => v.name.toLowerCase() === name.toLowerCase());
     if (idx === -1 && round.votes.length >= 40) return json(res, 400, { error: 'Te veel spelers in deze ronde.' });
-    if (idx === -1) round.votes.push({ name, dates, at: new Date().toISOString() });
-    else round.votes[idx] = { name: round.votes[idx].name, dates, at: new Date().toISOString() };
+    if (idx === -1) round.votes.push({ name, dates, none, time, at: new Date().toISOString() });
+    else round.votes[idx] = { name: round.votes[idx].name, dates, none, time, at: new Date().toISOString() };
     if (!db.players.some((n) => n.toLowerCase() === name.toLowerCase())) db.players.push(name);
     save();
     return json(res, 200, publicState());
@@ -289,7 +295,9 @@ async function api(req, res, url) {
         minPlayers: Math.min(12, Math.max(2, parseInt(b.minPlayers, 10) || DEFAULT_SETTINGS.minPlayers)),
         club: String(b.club || '').slice(0, 60),
         skipHolidays: b.skipHolidays !== false,
+        times: [...new Set(String(b.times || '').split(/[,\s]+/).filter((t) => /^\d{1,2}:\d{2}$/.test(t)).map((t) => t.padStart(5, '0')))].slice(0, 4),
       };
+      if (!s.times.length) s.times = DEFAULT_SETTINGS.times;
       if (!s.days.length) return json(res, 400, { error: 'Kies minstens één speeldag.' });
       db.settings = s;
       if (db.round) { db.history.unshift({ ...db.round, archivedAt: new Date().toISOString() }); db.history = db.history.slice(0, 20); }
