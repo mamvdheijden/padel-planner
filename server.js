@@ -106,11 +106,14 @@ function archive(r) {
   db.history = db.history.slice(0, 30);
 }
 const findRound = (id) => db.rounds.find((r) => r.id === String(id || ''));
-// Verlopen rondes gaan naar het archief. Is er daarna niets meer (of is dit de eerste start), dan komt er een standaardronde.
+// Verlopen rondes (periode voorbij of geaccepteerde speeldag geweest) gaan naar het archief. Is er daarna niets meer (of is dit de eerste start), dan komt er een standaardronde.
 function housekeeping() {
   const today = todayStr();
   const alive = [], expired = [];
-  for (const r of db.rounds) (r.dates.length && r.dates[r.dates.length - 1] >= today ? alive : expired).push(r);
+  for (const r of db.rounds) {
+    const over = !r.dates.length || r.dates[r.dates.length - 1] < today || (r.accepted && r.accepted.date < today); // periode voorbij, of geaccepteerde speeldag is geweest
+    (over ? expired : alive).push(r);
+  }
   let changed = false;
   if (expired.length) { expired.forEach(archive); db.rounds = alive; changed = true; }
   if (!db.rounds.length && (expired.length || (!db.history.length && !db.autoInit))) {
