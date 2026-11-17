@@ -94,3 +94,8 @@ details[open]>summary{margin-bottom:-4px}
 .seg{display:flex;gap:6px}
 .seg button{flex:1;min-height:48px;border-radius:12px;border:2px solid var(--line);background:var(--surface);font-size:14px;font-weight:500;color:var(--muted)}
 .seg button[aria-pressed=true]{border-color:var(--lime);background:rgba(200,245,66,.14);color:var(--text);font-weight:700}
+.rcard{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:2px solid var(--line);border-radius:20px;padding:14px 16px;color:inherit;text-decoration:none;min-height:44px}
+.rcard.todo{border-color:rgba(200,245,66,.5);background:rgba(200,245,66,.08)}
+.rcard:hover{border-color:var(--line2)}
+.rtitle{font-family:var(--head);font-weight:700;font-size:20px;letter-spacing:-.01em}
+.back{display:inline-flex;align-items:center;min-height:44px;color:var(--lime);text-decoration:none;font-size:14px;font-weight:600;margin:-8px 0 -8px}

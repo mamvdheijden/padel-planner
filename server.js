@@ -22,10 +22,12 @@ const DEFAULT_SETTINGS = {
 
 // ---------- opslag ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
-let db = { settings: { ...DEFAULT_SETTINGS }, round: null, history: [], players: [], links: [] };
+let db = { settings: { ...DEFAULT_SETTINGS }, rounds: [], history: [], players: [], links: [], autoInit: false };
 try {
   const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   db = { ...db, ...raw, settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) } };
+  if (db.round) { if (!db.rounds.length) db.rounds = [db.round]; delete db.round; } // migratie: één ronde -> meerdere
+  db.rounds.forEach((r) => { r.name = r.name || ''; });
 } catch (e) {
   if (e.code !== 'ENOENT') console.error('Kon db.json niet lezen:', e.message);
 }
@@ -64,11 +66,17 @@ function holidays(year) { // Nederlandse feestdagen (vrije dagen)
 }
 
 // Eerstvolgende maandag (strikt na vandaag), daarna `weeks` weken, gefilterd op speeldagen.
-function computeDates(settings, from = new Date()) {
+function computeDates(settings, from = new Date(), startDate = '') {
   const base = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  let add = (8 - base.getDay()) % 7; // dagen tot maandag
-  if (add === 0) add = 7;
-  const start = addDays(base, add);
+  let start;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(startDate) && parse(startDate) > base) {
+    const d = parse(startDate); // maandag op of na de gekozen datum
+    start = addDays(d, (8 - d.getDay()) % 7);
+  } else {
+    let add = (8 - base.getDay()) % 7; // dagen tot maandag
+    if (add === 0) add = 7;
+    start = addDays(base, add);
+  }
   const skip = new Set();
   if (settings.skipHolidays) {
     for (const y of [start.getFullYear(), start.getFullYear() + 1]) holidays(y).forEach((h) => skip.add(h));
@@ -82,24 +90,33 @@ function computeDates(settings, from = new Date()) {
   return out;
 }
 
-function newRound(settings) {
+function newRound(settings, name = '', startDate = '') {
   return {
     id: crypto.randomBytes(4).toString('hex'),
     createdAt: new Date().toISOString(),
+    name,
     settings: { ...settings },
-    dates: computeDates(settings),
-    votes: [], // [{ name, dates: [], at }]
+    dates: computeDates(settings, new Date(), startDate),
+    votes: [], // [{ name, dates, none, time, at }]
     accepted: null, // { date, at }
   };
 }
-function ensureRound() {
-  const r = db.round;
-  if (!r || !r.dates.length || r.dates[r.dates.length - 1] < todayStr()) {
-    if (r) { db.history.unshift({ ...r, archivedAt: new Date().toISOString() }); db.history = db.history.slice(0, 20); }
-    db.round = newRound(db.settings);
-    save();
+function archive(r) {
+  db.history.unshift({ ...r, archivedAt: new Date().toISOString() });
+  db.history = db.history.slice(0, 30);
+}
+const findRound = (id) => db.rounds.find((r) => r.id === String(id || ''));
+// Verlopen rondes gaan naar het archief. Is er daarna niets meer (of is dit de eerste start), dan komt er een standaardronde.
+function housekeeping() {
+  const today = todayStr();
+  const alive = [], expired = [];
+  for (const r of db.rounds) (r.dates.length && r.dates[r.dates.length - 1] >= today ? alive : expired).push(r);
+  let changed = false;
+  if (expired.length) { expired.forEach(archive); db.rounds = alive; changed = true; }
+  if (!db.rounds.length && (expired.length || (!db.history.length && !db.autoInit))) {
+    db.rounds.push(newRound(db.settings)); db.autoInit = true; changed = true;
   }
-  return db.round;
+  if (changed) save();
 }
 
 // ---------- voorstel ----------
@@ -116,19 +133,24 @@ function ranking(round) {
   return { rows, proposal: ready[0] || null, reserve: ready[1] || null, others: ranked.filter((r) => r !== ready[0] && r !== ready[1]).slice(0, 5) };
 }
 
-function publicState() {
-  const round = ensureRound();
+const sortedNames = (set) => [...set].sort((a, b) => a.localeCompare(b, 'nl'));
+function knownPlayers(round) {
   const known = new Set(db.players);
-  round.votes.forEach((v) => known.add(v.name));
+  if (round) round.votes.forEach((v) => known.add(v.name));
+  return known;
+}
+
+function roundState(round) {
+  const known = knownPlayers(round);
   const voted = new Set(round.votes.map((v) => v.name.toLowerCase()));
   return {
     today: todayStr(),
-    players: [...known].sort((a, b) => a.localeCompare(b, 'nl')),
-    locked: db.links.filter((l) => l.issued).map((l) => l.name),
-    notVoted: [...known].filter((n) => !voted.has(n.toLowerCase())).sort((a, b) => a.localeCompare(b, 'nl')),
+    players: sortedNames(known),
+    notVoted: sortedNames(new Set([...known].filter((n) => !voted.has(n.toLowerCase())))),
     cannot: round.votes.filter((v) => v.none).map((v) => v.name),
     round: {
       id: round.id,
+      name: round.name || '',
       dates: round.dates,
       settings: { times: DEFAULT_SETTINGS.times, ...round.settings },
       accepted: round.accepted,
@@ -136,6 +158,31 @@ function publicState() {
     },
     ...ranking(round),
   };
+}
+
+// Overzicht van alle open rondes; `me` = de speler (via link), `admin` = beheerder (via pincode)
+function overview(req, url) {
+  housekeeping();
+  const me = playerFor(req, url);
+  const admin = pinValid(req);
+  const out = {
+    today: todayStr(),
+    name: me ? me.name : null,
+    players: sortedNames(knownPlayers(null)),
+    rounds: db.rounds.map((r) => {
+      const v = me ? r.votes.find((x) => x.name.toLowerCase() === me.name.toLowerCase()) : null;
+      const item = {
+        id: r.id, name: r.name || '', first: r.dates[0], last: r.dates[r.dates.length - 1],
+        minPlayers: r.settings.minPlayers, club: r.settings.club || '', accepted: r.accepted,
+        voted: r.votes.length, total: knownPlayers(r).size,
+        me: me ? (v ? (v.none ? 'none' : 'voted') : 'open') : null, meCount: v ? v.dates.length : 0,
+      };
+      if (admin) { const p = ranking(r).proposal; item.proposal = p ? { date: p.date, count: p.count } : null; }
+      return item;
+    }),
+  };
+  if (admin) out.defaults = db.settings;
+  return out;
 }
 
 // ---------- http helpers ----------
@@ -221,7 +268,16 @@ async function api(req, res, url) {
   if (m === 'GET' && p === '/api/state') {
     if (tooMany(req)) return json(res, 429, { error: 'Te veel pogingen. Probeer het later opnieuw.' });
     if (!playerFor(req, url) && !pinValid(req)) { bump(req); return json(res, 401, { error: 'Alleen toegankelijk met een persoonlijke link.' }); }
-    return json(res, 200, publicState());
+    return json(res, 200, overview(req, url));
+  }
+
+  if (m === 'GET' && p === '/api/round') {
+    if (tooMany(req)) return json(res, 429, { error: 'Te veel pogingen. Probeer het later opnieuw.' });
+    if (!playerFor(req, url) && !pinValid(req)) { bump(req); return json(res, 401, { error: 'Alleen toegankelijk met een persoonlijke link.' }); }
+    housekeeping();
+    const round = findRound(url.searchParams.get('id'));
+    if (!round) return json(res, 404, { error: 'Deze ronde bestaat niet (meer).' });
+    return json(res, 200, roundState(round));
   }
 
   if (m === 'GET' && p === '/api/whoami') {
@@ -244,7 +300,9 @@ async function api(req, res, url) {
     const owner = playerFor(req, url);
     if (!owner) { bump(req); return json(res, 401, { error: 'Je hebt een persoonlijke link nodig om te stemmen.' }); }
     const name = owner.name;
-    const round = ensureRound();
+    housekeeping();
+    const round = findRound(body.id);
+    if (!round) return json(res, 404, { error: 'Deze ronde bestaat niet (meer).' });
     const today = todayStr();
     const none = body.none === true;
     const dates = none ? [] : [...new Set((Array.isArray(body.dates) ? body.dates : []).filter((d) => round.dates.includes(d) && d >= today))];
@@ -256,7 +314,7 @@ async function api(req, res, url) {
     else round.votes[idx] = { name: round.votes[idx].name, dates, none, time, at: new Date().toISOString() };
     if (!db.players.some((n) => n.toLowerCase() === name.toLowerCase())) db.players.push(name);
     save();
-    return json(res, 200, publicState());
+    return json(res, 200, roundState(round));
   }
 
   if (p.startsWith('/api/admin/')) {
@@ -284,7 +342,7 @@ async function api(req, res, url) {
       if (!name) return json(res, 400, { error: 'Vul een naam in.' });
       ensureLink(name);
       save();
-      return json(res, 200, publicState());
+      return json(res, 200, overview(req, url));
     }
 
     if (m === 'POST' && p === '/api/admin/round') {
@@ -299,38 +357,53 @@ async function api(req, res, url) {
       };
       if (!s.times.length) s.times = DEFAULT_SETTINGS.times;
       if (!s.days.length) return json(res, 400, { error: 'Kies minstens één speeldag.' });
+      if (db.rounds.length >= 10) return json(res, 400, { error: 'Maximaal 10 open rondes tegelijk. Sluit eerst een ronde af.' });
+      const name = String(b.name || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+      const r = newRound(s, name, String(b.start || ''));
+      if (!r.dates.length) return json(res, 400, { error: 'Met deze instellingen zijn er geen speeldagen.' });
       db.settings = s;
-      if (db.round) { db.history.unshift({ ...db.round, archivedAt: new Date().toISOString() }); db.history = db.history.slice(0, 20); }
-      db.round = newRound(s);
+      db.rounds.push(r);
       save();
-      return json(res, 200, publicState());
+      return json(res, 200, { ...overview(req, url), created: r.id });
     }
 
     if (m === 'POST' && p === '/api/admin/accept') {
       const b = await readBody(req);
-      const round = ensureRound();
+      const round = findRound(b.id);
+      if (!round) return json(res, 404, { error: 'Deze ronde bestaat niet (meer).' });
       if (!round.dates.includes(b.date)) return json(res, 400, { error: 'Onbekende datum.' });
       round.accepted = { date: b.date, at: new Date().toISOString() };
       save();
-      return json(res, 200, publicState());
+      return json(res, 200, roundState(round));
     }
 
     if (m === 'POST' && p === '/api/admin/reopen') {
-      const round = ensureRound();
+      const b = await readBody(req);
+      const round = findRound(b.id);
+      if (!round) return json(res, 404, { error: 'Deze ronde bestaat niet (meer).' });
       round.accepted = null;
       save();
-      return json(res, 200, publicState());
+      return json(res, 200, roundState(round));
+    }
+
+    if (m === 'POST' && p === '/api/admin/close-round') {
+      const b = await readBody(req);
+      const round = findRound(b.id);
+      if (!round) return json(res, 404, { error: 'Deze ronde bestaat niet (meer).' });
+      archive(round);
+      db.rounds = db.rounds.filter((r) => r !== round);
+      save();
+      return json(res, 200, overview(req, url));
     }
 
     if (m === 'POST' && p === '/api/admin/remove-player') {
       const b = await readBody(req);
       const name = cleanName(b.name).toLowerCase();
-      const round = ensureRound();
-      round.votes = round.votes.filter((v) => v.name.toLowerCase() !== name);
+      db.rounds.forEach((r) => { r.votes = r.votes.filter((v) => v.name.toLowerCase() !== name); });
       db.players = db.players.filter((n) => n.toLowerCase() !== name);
       db.links = db.links.filter((l) => l.name.toLowerCase() !== name);
       save();
-      return json(res, 200, publicState());
+      return json(res, 200, overview(req, url));
     }
   }
   return json(res, 404, { error: 'Niet gevonden.' });
